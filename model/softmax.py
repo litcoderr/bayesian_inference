@@ -107,3 +107,42 @@ def infer(x: jnp.array, X: jnp.array, Y: jnp.array, B: int, M: int, mu: float, s
     dist /= dist_denominator[:, None]  # [N_test, M]
 
     return dist, sample_dist
+
+
+@jit
+def infer_with_sampled(x: jnp.array, X: jnp.array, Y: jnp.array, W: jnp.array, b: jnp.array) -> jnp.array:
+    """
+    Bayesian Inference of softmax
+
+    Args:
+        x: [N_test, D] to be inferred input data
+        X: [N_train, D] train input data
+        Y: [N_train] train output data
+        W: [B, D, M] sampled weight
+        b: [B, M] sampled bias
+
+    Returns:
+        (dist, sample_dist)
+        dist: [N_test, M] joint predicted distribution
+        sample_dist: [N_test, B, M] predicted distribution for every sample
+    """
+
+    # compute sampled posterior distribution given sampled thetas
+    posterior = sampled_posterior(X, Y, W, b)  # [B]
+
+    # compute distribution for every sampled W
+    prob_w = model(x, W, b)  # [B, N_test, M]
+
+    # compute non-normalized probability distribution
+    sample_dist = jnp.transpose(prob_w * posterior[:, None, None], axes=(1, 0, 2))  # [N_test, B, M]
+    dist = jnp.sum(sample_dist, axis=1) # [N_test, M]
+
+    # normalize sample distribution
+    sample_denominator = jnp.clip(jnp.sum(sample_dist, axis=2), a_min=jnp.finfo(jnp.float32).tiny) # [N_test, B]
+    sample_dist /= sample_denominator[:, :, None]  # [N_test, B, M]
+
+    # normalize distribution
+    dist_denominator = jnp.clip(jnp.sum(dist, axis=1), a_min=jnp.finfo(jnp.float32).tiny) # [N_test]
+    dist /= dist_denominator[:, None]  # [N_test, M]
+
+    return dist, sample_dist
