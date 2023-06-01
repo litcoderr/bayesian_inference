@@ -6,7 +6,7 @@ import jax.numpy as jnp
 
 
 @jit
-def model(X: jnp.array, W: jnp.array, b: jnp.array) -> jnp.array:
+def model(X: jnp.array, W: jnp.array, b: jnp.array, e: jnp.array) -> jnp.array:
     """
     P(Y|X W b)
 
@@ -14,11 +14,13 @@ def model(X: jnp.array, W: jnp.array, b: jnp.array) -> jnp.array:
         X: [N, D]
         W: [B, D, M]
         b: [B, M]
+        e: [B, M] sampled epsilon
 
     Returns:
         [B, N, M]
     """
-    non_linear = jnp.exp(jnp.matmul(X, W) + jnp.expand_dims(b, axis=1))  # [B, N, M]
+    linear = jnp.matmul(X, W) + jnp.expand_dims(b, axis=1) + jnp.expand_dims(e, axis=1) # [B, N, M]
+    non_linear = jnp.exp(linear)  # [B, N, M]
     denominator = jnp.expand_dims(jnp.sum(non_linear, axis=2), axis=2)  # [B, N, 1]
     return non_linear / denominator  # [B, N, M]
 
@@ -43,8 +45,18 @@ def sample_theta(B: int, D: int, M: int, mu: float = 0, sigma: float = 1) -> Tup
     b = np.random.normal(mu, sigma, size=(B, M))
     return W, b
 
+def sample_epsilon(B: int, M: int, mu: float = 0, sigma: float = 1) -> np.array:
+    """
+    Sample epsilon
+
+    Args:
+        B: batch size
+        M: number of class
+    """
+    return np.random.normal(mu, sigma, size=(B, M))
+
 @jit
-def sampled_posterior(X: jnp.array, Y: jnp.array, W: jnp.array, b: jnp.array) -> jnp.array:
+def sampled_posterior(X: jnp.array, Y: jnp.array, W: jnp.array, b: jnp.array, e: jnp.array) -> jnp.array:
     """
     proportionate to P(W b | X Y)\n
     P(Y|X W b) = P(y_1|x_1 W b) * ... * P(y_N|x_N W b)\n
@@ -54,12 +66,13 @@ def sampled_posterior(X: jnp.array, Y: jnp.array, W: jnp.array, b: jnp.array) ->
         Y: [N] train output data
         W: [B, D, M] sampled weight
         b: [B, M] sampled bias
+        e: [B, M] sampled epsilon
     
     Returns:
         [B] proportionate posterior
     """
     # predicted distribution of Y given X W and b
-    predicted = model(X, W, b)  # [B, N, M]
+    predicted = model(X, W, b, e)  # [B, N, M]
     predicted = predicted[:, jnp.arange(predicted.shape[1]), Y]  # [B, N]
     return jnp.prod(predicted, axis=1)  # [B]
 
@@ -86,13 +99,15 @@ def infer(x: jnp.array, X: jnp.array, Y: jnp.array, B: int, M: int, mu: float, s
     # get sampled thetas
     # W [B, D, M]
     # b [B, M]
+    # e [B, M]
     W, b = sample_theta(B, D, M, mu, sigma)
+    e = sample_epsilon(B, M, 0, 1)
 
     # compute sampled posterior distribution given sampled thetas
-    posterior = sampled_posterior(X, Y, W, b)  # [B]
+    posterior = sampled_posterior(X, Y, W, b, e)  # [B]
 
     # compute distribution for every sampled W
-    prob_w = model(x, W, b)  # [B, N_test, M]
+    prob_w = model(x, W, b, e)  # [B, N_test, M]
 
     # compute non-normalized probability distribution
     sample_dist = jnp.transpose(prob_w * posterior[:, None, None], axes=(1, 0, 2))  # [N_test, B, M]
@@ -110,7 +125,7 @@ def infer(x: jnp.array, X: jnp.array, Y: jnp.array, B: int, M: int, mu: float, s
 
 
 @jit
-def infer_with_sampled(x: jnp.array, X: jnp.array, Y: jnp.array, W: jnp.array, b: jnp.array) -> jnp.array:
+def infer_with_sampled(x: jnp.array, X: jnp.array, Y: jnp.array, W: jnp.array, b: jnp.array, e: jnp.array) -> jnp.array:
     """
     Bayesian Inference of softmax
 
@@ -120,6 +135,7 @@ def infer_with_sampled(x: jnp.array, X: jnp.array, Y: jnp.array, W: jnp.array, b
         Y: [N_train] train output data
         W: [B, D, M] sampled weight
         b: [B, M] sampled bias
+        e: [B, M] sampled epsilon
 
     Returns:
         (dist, sample_dist)
@@ -128,10 +144,10 @@ def infer_with_sampled(x: jnp.array, X: jnp.array, Y: jnp.array, W: jnp.array, b
     """
 
     # compute sampled posterior distribution given sampled thetas
-    posterior = sampled_posterior(X, Y, W, b)  # [B]
+    posterior = sampled_posterior(X, Y, W, b, e)  # [B]
 
     # compute distribution for every sampled W
-    prob_w = model(x, W, b)  # [B, N_test, M]
+    prob_w = model(x, W, b, e)  # [B, N_test, M]
 
     # compute non-normalized probability distribution
     sample_dist = jnp.transpose(prob_w * posterior[:, None, None], axes=(1, 0, 2))  # [N_test, B, M]
